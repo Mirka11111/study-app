@@ -1,12 +1,17 @@
 name: Build APK
 
-on: [push, workflow_dispatch]
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -19,13 +24,43 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Build APK
+      - name: Recreate flutter platforms
         run: |
-          flutter create .
-          flutter build apk --release
+          flutter create --platforms=android --org com.studytracker .
+
+      - name: Patch Android Configuration
+        run: |
+          python3 -c "
+          import os
+
+          # Патчим gradle-файл приложения
+          gradle_file = 'android/app/build.gradle.kts' if os.path.exists('android/app/build.gradle.kts') else 'android/app/build.gradle'
+          with open(gradle_file, 'r') as f:
+              data = f.read()
+
+          # Гарантируем minSdk 21
+          data = data.replace('minSdkVersion = flutter.minSdkVersion', 'minSdkVersion = 21')
+          data = data.replace('minSdk = flutter.minSdkVersion', 'minSdk = 21')
+
+          # Добавляем desugaring
+          if 'desugar_jdk_libs' not in data:
+              if 'compileOptions {' in data:
+                  data = data.replace('compileOptions {', 'compileOptions {\n        isCoreLibraryDesugaringEnabled = true\n        coreLibraryDesugaringEnabled = true')
+              if 'dependencies {' in data:
+                  data = data.replace('dependencies {', 'dependencies {\n    coreLibraryDesugaring(\"com.android.tools:desugar_jdk_libs:2.0.4\")\n    coreLibraryDesugaring \"com.android.tools:desugar_jdk_libs:2.0.4\"')
+
+          with open(gradle_file, 'w') as f:
+              f.write(data)
+          "
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build APK
+        run: flutter build apk --release --target-platform=android-arm64 --no-tree-shake-icons
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: study-tracker-apk
-          path: build/app/outputs/flutter
+          name: StudyTracker-S25Ultra-APK
+          path: build/app/outputs/flutter-apk/app-release.apk
