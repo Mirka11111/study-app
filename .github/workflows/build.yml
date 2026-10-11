@@ -28,27 +28,30 @@ jobs:
         run: |
           flutter create --platforms=android --org com.studytracker .
 
-      - name: Fix Kotlin Gradle Config
+      - name: Fix Desugaring Configuration
         run: |
           python3 -c "
           p = 'android/app/build.gradle.kts'
           with open(p, 'r') as f:
               s = f.read()
 
-          # Задаем minSdk
+          # Задаем minSdk 21
           s = s.replace('minSdk = flutter.minSdkVersion', 'minSdk = 21')
 
-          # Добавляем флаг desugaring
+          # Включаем флаг desugaring внутри compileOptions
           if 'isCoreLibraryDesugaringEnabled' not in s:
               s = s.replace('compileOptions {', 'compileOptions {\n        isCoreLibraryDesugaringEnabled = true')
-
-          # Добавляем зависимость desugar_jdk_libs
-          if 'desugar_jdk_libs' not in s:
-              s = s.replace('dependencies {', 'dependencies {\n    coreLibraryDesugaring(\"com.android.tools:desugar_jdk_libs:2.0.4\")')
 
           with open(p, 'w') as f:
               f.write(s)
           "
+          # Гарантированно дописываем блок dependencies с нужной библиотекой в конец файла
+          cat << 'EOF' >> android/app/build.gradle.kts
+
+          dependencies {
+              coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+          }
+          EOF
 
       - name: Get packages
         run: flutter pub get
