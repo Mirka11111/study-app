@@ -1,9 +1,17 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-void main() {
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+    FlutterLocalNotificationsPlugin();
+
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+  await flutterLocalNotificationsPlugin.initialize(
+    const InitializationSettings(android: androidInit),
+  );
   runApp(const StudyTrackerApp());
 }
 
@@ -21,22 +29,26 @@ class _StudyTrackerAppState extends State<StudyTrackerApp> {
   void initState() {
     super.initState();
     _loadTheme();
+    _requestNotificationPermission();
+  }
+
+  Future<void> _requestNotificationPermission() async {
+    final androidImpl = flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+    await androidImpl?.requestNotificationsPermission();
   }
 
   Future<void> _loadTheme() async {
     final prefs = await SharedPreferences.getInstance();
     final index = prefs.getInt('theme_mode') ?? 2;
-    setState(() {
-      _themeMode = ThemeMode.values[index];
-    });
+    setState(() => _themeMode = ThemeMode.values[index]);
   }
 
   Future<void> _changeTheme(ThemeMode mode) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('theme_mode', mode.index);
-    setState(() {
-      _themeMode = mode;
-    });
+    setState(() => _themeMode = mode);
   }
 
   @override
@@ -48,16 +60,16 @@ class _StudyTrackerAppState extends State<StudyTrackerApp> {
       theme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.light,
-        colorSchemeSeed: Colors.indigo,
-        scaffoldBackgroundColor: const Color(0xFFF6F8FA),
+        colorSchemeSeed: Colors.orange,
+        scaffoldBackgroundColor: const Color(0xFFF8F9FA),
       ),
       darkTheme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,
-        colorSchemeSeed: Colors.indigo,
-        scaffoldBackgroundColor: const Color(0xFF0F141C),
+        colorSchemeSeed: Colors.deepOrange,
+        scaffoldBackgroundColor: const Color(0xFF111418),
       ),
-      home: MainDashboardScreen(
+      home: HomeScreen(
         currentThemeMode: _themeMode,
         onThemeChanged: _changeTheme,
       ),
@@ -65,21 +77,21 @@ class _StudyTrackerAppState extends State<StudyTrackerApp> {
   }
 }
 
-class MainDashboardScreen extends StatefulWidget {
+class HomeScreen extends StatefulWidget {
   final ThemeMode currentThemeMode;
   final ValueChanged<ThemeMode> onThemeChanged;
 
-  const MainDashboardScreen({
+  const HomeScreen({
     super.key,
     required this.currentThemeMode,
     required this.onThemeChanged,
   });
 
   @override
-  State<MainDashboardScreen> createState() => _MainDashboardScreenState();
+  State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _MainDashboardScreenState extends State<MainDashboardScreen> {
+class _HomeScreenState extends State<HomeScreen> {
   int _streakDays = 5;
   int _totalHours = 42;
   int _completedSessions = 18;
@@ -91,13 +103,16 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
   Timer? _timer;
 
   final List<IconData> _avatars = const [
-    Icons.person,
-    Icons.school,
-    Icons.psychology,
     Icons.local_fire_department,
+    Icons.school,
     Icons.rocket_launch,
-    Icons.emoji_events,
+    Icons.sports_esports,
+    Icons.bolt,
+    Icons.psychology,
   ];
+
+  final List<String> _weekDays = const ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+  final List<bool> _weekActive = [true, true, true, true, true, false, false];
 
   @override
   void initState() {
@@ -111,6 +126,7 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
       _streakDays = prefs.getInt('streak_days') ?? 5;
       _userName = prefs.getString('user_name') ?? 'Студент';
       _selectedAvatarIndex = prefs.getInt('avatar_index') ?? 0;
+      _completedSessions = prefs.getInt('completed_sessions') ?? 18;
     });
   }
 
@@ -119,6 +135,22 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
     await prefs.setInt('streak_days', _streakDays);
     await prefs.setString('user_name', _userName);
     await prefs.setInt('avatar_index', _selectedAvatarIndex);
+    await prefs.setInt('completed_sessions', _completedSessions);
+  }
+
+  Future<void> _showSessionFinishedNotification() async {
+    const androidDetails = AndroidNotificationDetails(
+      'study_channel',
+      'Занятия и фокус',
+      importance: Importance.max,
+      priority: Priority.high,
+    );
+    await flutterLocalNotificationsPlugin.show(
+      0,
+      '🔥 Сессия завершена!',
+      'Отличная работа! 20 минут фокуса засчитаны, стрик увеличен.',
+      const NotificationDetails(android: androidDetails),
+    );
   }
 
   void _startTimer() {
@@ -144,12 +176,15 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
       _timerSeconds = 20 * 60;
       _streakDays += 1;
       _completedSessions += 1;
+      _totalHours += 1;
     });
     _saveUserData();
+    _showSessionFinishedNotification();
+
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('🎉 Сессия завершена! Стрик увеличен!'),
-        backgroundColor: Colors.green,
+        content: Text('🎉 Сессия окончена! Уведомление отправлено, стрик вырос!'),
+        backgroundColor: Colors.deepOrange,
       ),
     );
   }
@@ -164,71 +199,54 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (ctx) {
-        return Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'Выберите аватар',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 16,
-                runSpacing: 16,
-                children: List.generate(_avatars.length, (idx) {
-                  return GestureDetector(
-                    onTap: () {
-                      setState(() => _selectedAvatarIndex = idx);
-                      _saveUserData();
-                      Navigator.pop(ctx);
-                    },
-                    child: CircleAvatar(
-                      radius: 28,
-                      backgroundColor: _selectedAvatarIndex == idx
-                          ? Theme.of(context).colorScheme.primary
-                          : Colors.grey.withOpacity(0.2),
-                      child: Icon(
-                        _avatars[idx],
-                        color: _selectedAvatarIndex == idx
-                            ? Colors.white
-                            : Theme.of(context).iconTheme.color,
-                      ),
-                    ),
-                  );
-                }),
-              ),
-              const SizedBox(height: 20),
-            ],
-          ),
-        );
-      },
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Выбери аватар', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 16,
+              runSpacing: 16,
+              children: List.generate(_avatars.length, (idx) {
+                return GestureDetector(
+                  onTap: () {
+                    setState(() => _selectedAvatarIndex = idx);
+                    _saveUserData();
+                    Navigator.pop(ctx);
+                  },
+                  child: CircleAvatar(
+                    radius: 26,
+                    backgroundColor: _selectedAvatarIndex == idx
+                        ? Colors.deepOrange
+                        : Colors.grey.withOpacity(0.2),
+                    child: Icon(_avatars[idx], color: Colors.white),
+                  ),
+                );
+              }),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
-  void _openEditNameDialog() {
-    final controller = TextEditingController(text: _userName);
+  void _openNameDialog() {
+    final c = TextEditingController(text: _userName);
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Ваше имя'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(hintText: 'Введите имя'),
-        ),
+        title: const Text('Сменить имя'),
+        content: TextField(controller: c, decoration: const InputDecoration(hintText: 'Имя профиля')),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Отмена'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
           FilledButton(
             onPressed: () {
-              if (controller.text.trim().isNotEmpty) {
-                setState(() => _userName = controller.text.trim());
+              if (c.text.trim().isNotEmpty) {
+                setState(() => _userName = c.text.trim());
                 _saveUserData();
               }
               Navigator.pop(ctx);
@@ -248,302 +266,202 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Трекер подготовки', style: TextStyle(fontWeight: FontWeight.bold)),
-        elevation: 0,
-        backgroundColor: Colors.transparent,
+        title: const Text('Study Tracker', style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
-          PopupMenuButton<ThemeMode>(
-            icon: Icon(
-              widget.currentThemeMode == ThemeMode.dark
-                  ? Icons.dark_mode
-                  : widget.currentThemeMode == ThemeMode.light
-                      ? Icons.light_mode
-                      : Icons.brightness_auto,
-            ),
+          IconButton(
+            icon: Icon(widget.currentThemeMode == ThemeMode.dark ? Icons.light_mode : Icons.dark_mode),
             tooltip: 'Сменить тему',
-            onSelected: widget.onThemeChanged,
-            itemBuilder: (ctx) => const [
-              PopupMenuItem(
-                value: ThemeMode.dark,
-                child: Row(
-                  children: [
-                    Icon(Icons.dark_mode, size: 20),
-                    SizedBox(width: 8),
-                    Text('Тёмная тема'),
-                  ],
-                ),
-              ),
-              PopupMenuItem(
-                value: ThemeMode.light,
-                child: Row(
-                  children: [
-                    Icon(Icons.light_mode, size: 20),
-                    SizedBox(width: 8),
-                    Text('Светлая тема'),
-                  ],
-                ),
-              ),
-              PopupMenuItem(
-                value: ThemeMode.system,
-                child: Row(
-                  children: [
-                    Icon(Icons.brightness_auto, size: 20),
-                    SizedBox(width: 8),
-                    Text('Системная'),
-                  ],
-                ),
-              ),
-            ],
+            onPressed: () {
+              widget.onThemeChanged(
+                widget.currentThemeMode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark,
+              );
+            },
           ),
-          const SizedBox(width: 8),
+          IconButton(
+            icon: const Icon(Icons.notifications_active_outlined),
+            tooltip: 'Тест уведомления',
+            onPressed: _showSessionFinishedNotification,
+          ),
         ],
       ),
       body: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+        padding: const EdgeInsets.all(16),
         children: [
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: isDark ? const Color(0xFF1E2633) : Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: isDark ? Colors.white10 : Colors.black12,
+          // ПРОФИЛЬ
+          Card(
+            elevation: 2,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  GestureDetector(
+                    onTap: _openAvatarPicker,
+                    child: CircleAvatar(
+                      radius: 32,
+                      backgroundColor: Colors.deepOrange.withOpacity(0.2),
+                      child: Icon(_avatars[_selectedAvatarIndex], size: 36, color: Colors.deepOrange),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(_userName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                            IconButton(
+                              icon: const Icon(Icons.edit_outlined, size: 16),
+                              onPressed: _openNameDialog,
+                            ),
+                          ],
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: Colors.deepOrange.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            '🔥 Стрик: $_streakDays дней',
+                            style: const TextStyle(color: Colors.deepOrange, fontWeight: FontWeight.bold, fontSize: 13),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
-            child: Row(
-              children: [
-                GestureDetector(
-                  onTap: _openAvatarPicker,
-                  child: Stack(
-                    alignment: Alignment.bottomRight,
-                    children: [
-                      CircleAvatar(
-                        radius: 34,
-                        backgroundColor: theme.colorScheme.primaryContainer,
-                        child: Icon(
-                          _avatars[_selectedAvatarIndex],
-                          size: 38,
-                          color: theme.colorScheme.onPrimaryContainer,
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.primary,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(Icons.edit, size: 12, color: Colors.white),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
+          ),
+          const SizedBox(height: 14),
+
+          // КАЛЕНДАРЬ СТРИКА ПО ДНЯМ НЕДЕЛИ
+          Card(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Активность на неделе', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: List.generate(7, (i) {
+                      final done = _weekActive[i];
+                      return Column(
                         children: [
-                          Flexible(
-                            child: Text(
-                              _userName,
-                              style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                              overflow: TextOverflow.ellipsis,
+                          CircleAvatar(
+                            radius: 18,
+                            backgroundColor: done ? Colors.deepOrange : Colors.grey.withOpacity(0.2),
+                            child: Icon(
+                              done ? Icons.local_fire_department : Icons.circle_outlined,
+                              size: 18,
+                              color: done ? Colors.white : Colors.grey,
                             ),
                           ),
-                          IconButton(
-                            icon: const Icon(Icons.edit_outlined, size: 18),
-                            onPressed: _openEditNameDialog,
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                          ),
+                          const SizedBox(height: 6),
+                          Text(_weekDays[i], style: const TextStyle(fontSize: 12)),
                         ],
-                      ),
-                      const SizedBox(height: 4),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: Colors.amber.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Text(
-                          '⚡ Знаток подготовки',
-                          style: TextStyle(
-                            color: Colors.amber,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
+                      );
+                    }),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
+
+          // СТАТИСТИКА
           Row(
             children: [
               Expanded(
-                child: _buildMetricCard(
-                  title: 'Стрик',
-                  value: '$_streakDays дн.',
-                  icon: Icons.local_fire_department,
-                  iconColor: Colors.deepOrangeAccent,
-                  isDark: isDark,
+                child: Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.check_circle_outline, color: Colors.green),
+                        const SizedBox(height: 6),
+                        Text('$_completedSessions', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        const Text('Сессий', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                      ],
+                    ),
+                  ),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
               Expanded(
-                child: _buildMetricCard(
-                  title: 'Сессий',
-                  value: '$_completedSessions',
-                  icon: Icons.done_all,
-                  iconColor: Colors.greenAccent,
-                  isDark: isDark,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildMetricCard(
-                  title: 'В фокусе',
-                  value: '$_totalHours ч.',
-                  icon: Icons.timer_outlined,
-                  iconColor: Colors.lightBlueAccent,
-                  isDark: isDark,
+                child: Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.timer_outlined, color: Colors.blueAccent),
+                        const SizedBox(height: 6),
+                        Text('$_totalHours ч.', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        const Text('Всего часов', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              gradient: theme.brightness == Brightness.dark
-                  ? const LinearGradient(
-                      colors: [Color(0xFF232D3F), Color(0xFF161D26)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    )
-                  : LinearGradient(
-                      colors: [Colors.indigo.shade50, Colors.white],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(
-                color: isDark ? Colors.white12 : Colors.indigo.shade100,
-              ),
-            ),
-            child: Column(
-              children: [
-                const Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Текущая сессия',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-                    Icon(Icons.hourglass_top_rounded, size: 20),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  _formatTimer(_timerSeconds),
-                  style: const TextStyle(
-                    fontSize: 48,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 2,
+          const SizedBox(height: 14),
+
+          // ТАЙМЕР ЗАНЯТИЙ
+          Card(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                children: [
+                  const Text('Фокус-сессия', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  Text(
+                    _formatTimer(_timerSeconds),
+                    style: const TextStyle(fontSize: 48, fontWeight: FontWeight.w900, letterSpacing: 2),
                   ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Минимум 20 минут для защиты стрика',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: theme.textTheme.bodySmall?.color?.withOpacity(0.7),
-                  ),
-                ),
-                const SizedBox(height: 18),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    if (!_isTimerRunning)
+                  const SizedBox(height: 14),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
                       ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.indigoAccent,
+                          backgroundColor: Colors.deepOrange,
                           foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                         ),
                         onPressed: _startTimer,
-                        icon: const Icon(Icons.play_arrow_rounded),
-                        label: const Text('Начать сессию'),
-                      )
-                    else ...[
+                        icon: const Icon(Icons.play_arrow),
+                        label: const Text('Старт'),
+                      ),
+                      const SizedBox(width: 10),
                       OutlinedButton.icon(
                         onPressed: _pauseTimer,
                         icon: const Icon(Icons.pause),
                         label: const Text('Пауза'),
                       ),
-                      const SizedBox(width: 12),
-                      ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
-                          foregroundColor: Colors.white,
-                        ),
+                      const SizedBox(width: 10),
+                      IconButton(
+                        icon: const Icon(Icons.done, color: Colors.green),
+                        tooltip: 'Завершить досрочно',
                         onPressed: _finishSession,
-                        icon: const Icon(Icons.check),
-                        label: const Text('Завершить'),
                       ),
                     ],
-                  ],
-                ),
-              ],
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMetricCard({
-    required String title,
-    required String value,
-    required IconData icon,
-    required Color iconColor,
-    required bool isDark,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E2633) : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: isDark ? Colors.white10 : Colors.black12,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: iconColor, size: 24),
-          const SizedBox(height: 10),
-          Text(
-            value,
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            title,
-            style: const TextStyle(fontSize: 12, color: Colors.grey),
           ),
         ],
       ),
