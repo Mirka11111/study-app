@@ -24,36 +24,33 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Recreate flutter platforms
+      - name: Recreate platforms
         run: |
           flutter create --platforms=android --org com.studytracker .
 
-      - name: Patch Android Configuration
+      - name: Fix Kotlin Gradle Config
         run: |
           python3 -c "
-          import os
+          p = 'android/app/build.gradle.kts'
+          with open(p, 'r') as f:
+              s = f.read()
 
-          # Патчим gradle-файл приложения
-          gradle_file = 'android/app/build.gradle.kts' if os.path.exists('android/app/build.gradle.kts') else 'android/app/build.gradle'
-          with open(gradle_file, 'r') as f:
-              data = f.read()
+          # Задаем minSdk
+          s = s.replace('minSdk = flutter.minSdkVersion', 'minSdk = 21')
 
-          # Гарантируем minSdk 21
-          data = data.replace('minSdkVersion = flutter.minSdkVersion', 'minSdkVersion = 21')
-          data = data.replace('minSdk = flutter.minSdkVersion', 'minSdk = 21')
+          # Добавляем флаг desugaring
+          if 'isCoreLibraryDesugaringEnabled' not in s:
+              s = s.replace('compileOptions {', 'compileOptions {\n        isCoreLibraryDesugaringEnabled = true')
 
-          # Добавляем desugaring
-          if 'desugar_jdk_libs' not in data:
-              if 'compileOptions {' in data:
-                  data = data.replace('compileOptions {', 'compileOptions {\n        isCoreLibraryDesugaringEnabled = true\n        coreLibraryDesugaringEnabled = true')
-              if 'dependencies {' in data:
-                  data = data.replace('dependencies {', 'dependencies {\n    coreLibraryDesugaring(\"com.android.tools:desugar_jdk_libs:2.0.4\")\n    coreLibraryDesugaring \"com.android.tools:desugar_jdk_libs:2.0.4\"')
+          # Добавляем зависимость desugar_jdk_libs
+          if 'desugar_jdk_libs' not in s:
+              s = s.replace('dependencies {', 'dependencies {\n    coreLibraryDesugaring(\"com.android.tools:desugar_jdk_libs:2.0.4\")')
 
-          with open(gradle_file, 'w') as f:
-              f.write(data)
+          with open(p, 'w') as f:
+              f.write(s)
           "
 
-      - name: Get dependencies
+      - name: Get packages
         run: flutter pub get
 
       - name: Build APK
