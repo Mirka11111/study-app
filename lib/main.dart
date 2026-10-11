@@ -3,15 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-    FlutterLocalNotificationsPlugin();
+final FlutterLocalNotificationsPlugin np = FlutterLocalNotificationsPlugin();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-  await flutterLocalNotificationsPlugin.initialize(
-    const InitializationSettings(android: androidInit),
+  const initSettings = InitializationSettings(
+    android: AndroidInitializationSettings('@mipmap/ic_launcher'),
   );
+  await np.initialize(initSettings);
   runApp(const StudyTrackerApp());
 }
 
@@ -29,26 +28,19 @@ class _StudyTrackerAppState extends State<StudyTrackerApp> {
   void initState() {
     super.initState();
     _loadTheme();
-    _requestNotificationPermission();
-  }
-
-  Future<void> _requestNotificationPermission() async {
-    final androidImpl = flutterLocalNotificationsPlugin
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>();
-    await androidImpl?.requestNotificationsPermission();
   }
 
   Future<void> _loadTheme() async {
     final prefs = await SharedPreferences.getInstance();
-    final index = prefs.getInt('theme_mode') ?? 2;
-    setState(() => _themeMode = ThemeMode.values[index]);
+    final idx = prefs.getInt('app_theme') ?? 2;
+    setState(() => _themeMode = ThemeMode.values[idx]);
   }
 
-  Future<void> _changeTheme(ThemeMode mode) async {
+  void _toggleTheme() async {
+    final next = _themeMode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('theme_mode', mode.index);
-    setState(() => _themeMode = mode);
+    await prefs.setInt('app_theme', next.index);
+    setState(() => _themeMode = next);
   }
 
   @override
@@ -60,31 +52,31 @@ class _StudyTrackerAppState extends State<StudyTrackerApp> {
       theme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.light,
-        colorSchemeSeed: Colors.orange,
-        scaffoldBackgroundColor: const Color(0xFFF8F9FA),
+        colorSchemeSeed: Colors.deepOrange,
+        scaffoldBackgroundColor: const Color(0xFFF5F7FA),
       ),
       darkTheme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,
         colorSchemeSeed: Colors.deepOrange,
-        scaffoldBackgroundColor: const Color(0xFF111418),
+        scaffoldBackgroundColor: const Color(0xFF0F1318),
       ),
       home: HomeScreen(
-        currentThemeMode: _themeMode,
-        onThemeChanged: _changeTheme,
+        onToggleTheme: _toggleTheme,
+        isDark: _themeMode == ThemeMode.dark,
       ),
     );
   }
 }
 
 class HomeScreen extends StatefulWidget {
-  final ThemeMode currentThemeMode;
-  final ValueChanged<ThemeMode> onThemeChanged;
+  final VoidCallback onToggleTheme;
+  final bool isDark;
 
   const HomeScreen({
     super.key,
-    required this.currentThemeMode,
-    required this.onThemeChanged,
+    required this.onToggleTheme,
+    required this.isDark,
   });
 
   @override
@@ -92,72 +84,69 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  int _streakDays = 5;
-  int _totalHours = 42;
-  int _completedSessions = 18;
-  String _userName = 'Студент';
-  int _selectedAvatarIndex = 0;
+  // Реальные данные пользователя (без выдуманных цифр)
+  int _streak = 0;
+  int _totalSecondsStudied = 0;
+  int _sessionsCount = 0;
+  String _userName = 'Мой Профиль';
+  int _avatarIndex = 0;
+  String _savedReminderTime = ''; // пусто, если напоминание еще не создано
 
-  bool _isTimerRunning = false;
-  int _timerSeconds = 20 * 60;
+  // Таймер текущей сессии (25 минут фокуса)
+  final int _sessionDuration = 25 * 60;
+  int _currentSeconds = 25 * 60;
+  bool _isRunning = false;
   Timer? _timer;
 
   final List<IconData> _avatars = const [
-    Icons.local_fire_department,
-    Icons.school,
-    Icons.rocket_launch,
-    Icons.sports_esports,
-    Icons.bolt,
-    Icons.psychology,
+    Icons.person_rounded,
+    Icons.local_fire_department_rounded,
+    Icons.school_rounded,
+    Icons.rocket_launch_rounded,
+    Icons.psychology_rounded,
+    Icons.sports_esports_rounded,
   ];
-
-  final List<String> _weekDays = const ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
-  final List<bool> _weekActive = [true, true, true, true, true, false, false];
 
   @override
   void initState() {
     super.initState();
-    _loadUserData();
+    _initDataAndNotifications();
   }
 
-  Future<void> _loadUserData() async {
-    final prefs = await SharedPreferences.getInstance();
+  Future<void> _initDataAndNotifications() async {
+    // Запрос разрешения на уведомления (Android 13+)
+    final androidImpl = np.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    await androidImpl?.requestNotificationsPermission();
+
+    // Загрузка сохранённого прогресса
+    final p = await SharedPreferences.getInstance();
     setState(() {
-      _streakDays = prefs.getInt('streak_days') ?? 5;
-      _userName = prefs.getString('user_name') ?? 'Студент';
-      _selectedAvatarIndex = prefs.getInt('avatar_index') ?? 0;
-      _completedSessions = prefs.getInt('completed_sessions') ?? 18;
+      _streak = p.getInt('streak') ?? 0;
+      _totalSecondsStudied = p.getInt('total_seconds') ?? 0;
+      _sessionsCount = p.getInt('sessions_count') ?? 0;
+      _userName = p.getString('user_name') ?? 'Студент';
+      _avatarIndex = p.getInt('avatar_idx') ?? 0;
+      _savedReminderTime = p.getString('reminder_time') ?? '';
     });
   }
 
-  Future<void> _saveUserData() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('streak_days', _streakDays);
-    await prefs.setString('user_name', _userName);
-    await prefs.setInt('avatar_index', _selectedAvatarIndex);
-    await prefs.setInt('completed_sessions', _completedSessions);
+  Future<void> _saveProgress() async {
+    final p = await SharedPreferences.getInstance();
+    await p.setInt('streak', _streak);
+    await p.setInt('total_seconds', _totalSecondsStudied);
+    await p.setInt('sessions_count', _sessionsCount);
+    await p.setString('user_name', _userName);
+    await p.setInt('avatar_idx', _avatarIndex);
+    await p.setString('reminder_time', _savedReminderTime);
   }
 
-  Future<void> _showSessionFinishedNotification() async {
-    const androidDetails = AndroidNotificationDetails(
-      'study_channel',
-      'Занятия и фокус',
-      importance: Importance.max,
-      priority: Priority.high,
-    );
-    await flutterLocalNotificationsPlugin.show(
-      0,
-      '🔥 Сессия завершена!',
-      'Отличная работа! 20 минут фокуса засчитаны, стрик увеличен.',
-      const NotificationDetails(android: androidDetails),
-    );
-  }
-
+  // --- ЛОГИКА ТАЙМЕРА И СТРИКА ---
   void _startTimer() {
-    setState(() => _isTimerRunning = true);
-    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (_timerSeconds > 0) {
-        setState(() => _timerSeconds--);
+    setState(() => _isRunning = true);
+    _timer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (_currentSeconds > 0) {
+        setState(() => _currentSeconds--);
       } else {
         _finishSession();
       }
@@ -166,36 +155,93 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _pauseTimer() {
     _timer?.cancel();
-    setState(() => _isTimerRunning = false);
+    setState(() => _isRunning = false);
+  }
+
+  void _resetTimer() {
+    _timer?.cancel();
+    setState(() {
+      _isRunning = false;
+      _currentSeconds = _sessionDuration;
+    });
   }
 
   void _finishSession() {
     _timer?.cancel();
+    final spentSeconds = _sessionDuration - _currentSeconds;
     setState(() {
-      _isTimerRunning = false;
-      _timerSeconds = 20 * 60;
-      _streakDays += 1;
-      _completedSessions += 1;
-      _totalHours += 1;
+      _isRunning = false;
+      _currentSeconds = _sessionDuration;
+      _sessionsCount += 1;
+      _streak += 1; // Увеличиваем реальный стрик
+      _totalSecondsStudied += (spentSeconds > 0 ? spentSeconds : _sessionDuration);
     });
-    _saveUserData();
-    _showSessionFinishedNotification();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('🎉 Сессия окончена! Уведомление отправлено, стрик вырос!'),
-        backgroundColor: Colors.deepOrange,
-      ),
+    _saveProgress();
+    _sendSystemNotification(
+      title: '🏆 Сессия завершена!',
+      body: 'Ты отлично поработал! Стрик увеличен: $_streak дн.',
     );
   }
 
-  String _formatTimer(int sec) {
-    final m = (sec ~/ 60).toString().padLeft(2, '0');
-    final s = (sec % 60).toString().padLeft(2, '0');
-    return '$m:$s';
+  // --- ЛОГИКА УВЕДОМЛЕНИЙ ---
+  Future<void> _sendSystemNotification({required String title, required String body}) async {
+    const details = AndroidNotificationDetails(
+      'study_notifications',
+      'Напоминания об учебе',
+      importance: Importance.max,
+      priority: Priority.high,
+    );
+    await np.show(1, title, body, const NotificationDetails(android: details));
   }
 
-  void _openAvatarPicker() {
+  // Вызов диалога выбора времени для напоминания
+  Future<void> _pickReminderTime() async {
+    final TimeOfDay? picked = await showTimePicker(
+      context: context,
+      initialTime: const TimeOfDay(hour: 19, minute: 0),
+      helpText: 'ВЫБЕРИТЕ ВРЕМЯ НАПОМИНАНИЯ',
+      confirmText: 'СОХРАНИТЬ',
+      cancelText: 'ОТМЕНА',
+    );
+
+    if (picked != null) {
+      final h = picked.hour.toString().padLeft(2, '0');
+      final m = picked.minute.toString().padLeft(2, '0');
+      final formattedTime = '$h:$m';
+
+      setState(() => _savedReminderTime = formattedTime);
+      await _saveProgress();
+
+      // Шлем подтверждение в системную шторку
+      await _sendSystemNotification(
+        title: '🔔 Напоминание установлено',
+        body: 'Каждый день в $formattedTime мы напомним сесть за учебу!',
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Ежедневное напоминание установлено на $formattedTime'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    }
+  }
+
+  void _deleteReminder() async {
+    setState(() => _savedReminderTime = '');
+    await _saveProgress();
+    await np.cancel(1);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Напоминание удалено')),
+      );
+    }
+  }
+
+  // Смена аватара
+  void _chooseAvatar() {
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -206,24 +252,22 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Выбери аватар', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const Text('Выберите аватар', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 16),
             Wrap(
               spacing: 16,
               runSpacing: 16,
-              children: List.generate(_avatars.length, (idx) {
+              children: List.generate(_avatars.length, (i) {
                 return GestureDetector(
                   onTap: () {
-                    setState(() => _selectedAvatarIndex = idx);
-                    _saveUserData();
+                    setState(() => _avatarIndex = i);
+                    _saveProgress();
                     Navigator.pop(ctx);
                   },
                   child: CircleAvatar(
-                    radius: 26,
-                    backgroundColor: _selectedAvatarIndex == idx
-                        ? Colors.deepOrange
-                        : Colors.grey.withOpacity(0.2),
-                    child: Icon(_avatars[idx], color: Colors.white),
+                    radius: 28,
+                    backgroundColor: _avatarIndex == i ? Colors.deepOrange : Colors.grey.withOpacity(0.2),
+                    child: Icon(_avatars[i], color: Colors.white, size: 28),
                   ),
                 );
               }),
@@ -234,28 +278,34 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _openNameDialog() {
+  void _editName() {
     final c = TextEditingController(text: _userName);
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Сменить имя'),
-        content: TextField(controller: c, decoration: const InputDecoration(hintText: 'Имя профиля')),
+        title: const Text('Имя профиля'),
+        content: TextField(controller: c, decoration: const InputDecoration(hintText: 'Введите имя')),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
           FilledButton(
             onPressed: () {
               if (c.text.trim().isNotEmpty) {
                 setState(() => _userName = c.text.trim());
-                _saveUserData();
+                _saveProgress();
               }
               Navigator.pop(ctx);
             },
-            child: const Text('Сохранить'),
+            child: const Text('Готово'),
           ),
         ],
       ),
     );
+  }
+
+  String _formatTimer(int totalSec) {
+    final m = (totalSec ~/ 60).toString().padLeft(2, '0');
+    final s = (totalSec % 60).toString().padLeft(2, '0');
+    return '$m:$s';
   }
 
   @override
@@ -266,48 +316,38 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final hours = (_totalSecondsStudied / 3600).toStringAsFixed(1);
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Study Tracker', style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
           IconButton(
-            icon: Icon(widget.currentThemeMode == ThemeMode.dark ? Icons.light_mode : Icons.dark_mode),
+            icon: Icon(widget.isDark ? Icons.light_mode : Icons.dark_mode),
             tooltip: 'Сменить тему',
-            onPressed: () {
-              widget.onThemeChanged(
-                widget.currentThemeMode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark,
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.notifications_active_outlined),
-            tooltip: 'Тест уведомления',
-            onPressed: _showSessionFinishedNotification,
+            onPressed: widget.onToggleTheme,
           ),
         ],
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // ПРОФИЛЬ
+          // 1. ПРОФИЛЬ
           Card(
-            elevation: 2,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             child: Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(14),
               child: Row(
                 children: [
                   GestureDetector(
-                    onTap: _openAvatarPicker,
+                    onTap: _chooseAvatar,
                     child: CircleAvatar(
-                      radius: 32,
-                      backgroundColor: Colors.deepOrange.withOpacity(0.2),
-                      child: Icon(_avatars[_selectedAvatarIndex], size: 36, color: Colors.deepOrange),
+                      radius: 30,
+                      backgroundColor: Colors.deepOrange,
+                      child: Icon(_avatars[_avatarIndex], color: Colors.white, size: 32),
                     ),
                   ),
-                  const SizedBox(width: 16),
+                  const SizedBox(width: 14),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -316,20 +356,16 @@ class _HomeScreenState extends State<HomeScreen> {
                           children: [
                             Text(_userName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                             IconButton(
-                              icon: const Icon(Icons.edit_outlined, size: 16),
-                              onPressed: _openNameDialog,
+                              icon: const Icon(Icons.edit, size: 16),
+                              onPressed: _editName,
                             ),
                           ],
                         ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: Colors.deepOrange.withOpacity(0.15),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            '🔥 Стрик: $_streakDays дней',
-                            style: const TextStyle(color: Colors.deepOrange, fontWeight: FontWeight.bold, fontSize: 13),
+                        Text(
+                          _streak > 0 ? '🔥 Серия: $_streak дн.' : 'Серия ещё не начата (0 дн.)',
+                          style: TextStyle(
+                            color: _streak > 0 ? Colors.deepOrange : Colors.grey,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
                       ],
@@ -341,36 +377,53 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(height: 14),
 
-          // КАЛЕНДАРЬ СТРИКА ПО ДНЯМ НЕДЕЛИ
+          // 2. БЛОК НАПОМИНАНИЙ (ТА САМАЯ КНОПКА)
           Card(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            color: widget.isDark ? const Color(0xFF1B222C) : Colors.orange.shade50,
             child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+              padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Активность на неделе', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const Row(
+                    children: [
+                      Icon(Icons.alarm, color: Colors.deepOrange),
+                      SizedBox(width: 8),
+                      Text('Ежедневное напоминание', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  if (_savedReminderTime.isEmpty)
+                    const Text('Напоминание не настроено. Нажмите кнопку, чтобы не забывать про занятия.',
+                        style: TextStyle(fontSize: 13, color: Colors.grey))
+                  else
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('Установлено на: $_savedReminderTime каждый день',
+                            style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.deepOrange)),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline, color: Colors.red),
+                          tooltip: 'Удалить напоминание',
+                          onPressed: _deleteReminder,
+                        ),
+                      ],
+                    ),
                   const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: List.generate(7, (i) {
-                      final done = _weekActive[i];
-                      return Column(
-                        children: [
-                          CircleAvatar(
-                            radius: 18,
-                            backgroundColor: done ? Colors.deepOrange : Colors.grey.withOpacity(0.2),
-                            child: Icon(
-                              done ? Icons.local_fire_department : Icons.circle_outlined,
-                              size: 18,
-                              color: done ? Colors.white : Colors.grey,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(_weekDays[i], style: const TextStyle(fontSize: 12)),
-                        ],
-                      );
-                    }),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.deepOrange,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      onPressed: _pickReminderTime,
+                      icon: const Icon(Icons.add_alarm),
+                      label: Text(_savedReminderTime.isEmpty ? 'Создать напоминание' : 'Изменить время'),
+                    ),
                   ),
                 ],
               ),
@@ -378,37 +431,54 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(height: 14),
 
-          // СТАТИСТИКА
+          // 3. РЕАЛЬНАЯ СТАТИСТИКА
           Row(
             children: [
               Expanded(
                 child: Card(
                   child: Padding(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.all(14),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Icon(Icons.check_circle_outline, color: Colors.green),
+                        const Icon(Icons.local_fire_department, color: Colors.deepOrange),
                         const SizedBox(height: 6),
-                        Text('$_completedSessions', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                        const Text('Сессий', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                        Text('$_streak дн.', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                        const Text('Текущая серия', style: TextStyle(color: Colors.grey, fontSize: 12)),
                       ],
                     ),
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 10),
               Expanded(
                 child: Card(
                   child: Padding(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.all(14),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Icon(Icons.timer_outlined, color: Colors.blueAccent),
+                        const Icon(Icons.timelapse, color: Colors.blueAccent),
                         const SizedBox(height: 6),
-                        Text('$_totalHours ч.', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                        const Text('Всего часов', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                        Text('$hours ч.', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                        const Text('Налетал часов', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.done_all, color: Colors.green),
+                        const SizedBox(height: 6),
+                        Text('$_sessionsCount', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                        const Text('Сессий всего', style: TextStyle(color: Colors.grey, fontSize: 12)),
                       ],
                     ),
                   ),
@@ -418,43 +488,43 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(height: 14),
 
-          // ТАЙМЕР ЗАНЯТИЙ
+          // 4. ТАЙМЕР СЕССИИ (25 МИНУТ)
           Card(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
             child: Padding(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
               child: Column(
                 children: [
-                  const Text('Фокус-сессия', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 10),
+                  const Text('Фокус-таймер (Pomodoro)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 12),
                   Text(
-                    _formatTimer(_timerSeconds),
-                    style: const TextStyle(fontSize: 48, fontWeight: FontWeight.w900, letterSpacing: 2),
+                    _formatTimer(_currentSeconds),
+                    style: const TextStyle(fontSize: 52, fontWeight: FontWeight.w900, letterSpacing: 2),
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 16),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.deepOrange,
+                          backgroundColor: _isRunning ? Colors.amber.shade800 : Colors.deepOrange,
                           foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                         ),
-                        onPressed: _startTimer,
-                        icon: const Icon(Icons.play_arrow),
-                        label: const Text('Старт'),
+                        onPressed: _isRunning ? _pauseTimer : _startTimer,
+                        icon: Icon(_isRunning ? Icons.pause : Icons.play_arrow),
+                        label: Text(_isRunning ? 'Пауза' : 'Старт'),
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 12),
                       OutlinedButton.icon(
-                        onPressed: _pauseTimer,
-                        icon: const Icon(Icons.pause),
-                        label: const Text('Пауза'),
+                        onPressed: _resetTimer,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Сброс'),
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 8),
                       IconButton(
-                        icon: const Icon(Icons.done, color: Colors.green),
-                        tooltip: 'Завершить досрочно',
+                        icon: const Icon(Icons.check_circle, color: Colors.green, size: 30),
+                        tooltip: 'Завершить сессию досрочно',
                         onPressed: _finishSession,
                       ),
                     ],
