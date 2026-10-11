@@ -25,7 +25,7 @@ class _StudyTrackerAppState extends State<StudyTrackerApp> {
 
   Future<void> _loadTheme() async {
     final prefs = await SharedPreferences.getInstance();
-    final index = prefs.getInt('theme_mode') ?? 2; // По умолчанию темная
+    final index = prefs.getInt('theme_mode') ?? 2;
     setState(() {
       _themeMode = ThemeMode.values[index];
     });
@@ -87,7 +87,7 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
   int _selectedAvatarIndex = 0;
 
   bool _isTimerRunning = false;
-  int _timerSeconds = 20 * 60; // 20 минутная сессия
+  int _timerSeconds = 20 * 60;
   Timer? _timer;
 
   final List<IconData> _avatars = [
@@ -357,7 +357,7 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,
                               ),
-                              overflow: TextStream.ellipsis,
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                           IconButton(
@@ -393,7 +393,7 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
 
           const SizedBox(height: 16),
 
-          // СТАТИСТИКА / ПАНЕЛЬ СТРИКА
+          // ПАНЕЛЬ СТРИКА
           Row(
             children: [
               Expanded(
@@ -430,7 +430,7 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
 
           const SizedBox(height: 16),
 
-          // КАРТОЧКА ТАЙМЕРА ЗАНЯТИЯ
+          // ТАЙМЕР ЗАНЯТИЯ
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
@@ -546,10 +546,4 @@ class _MainDashboardScreenState extends State<MainDashboardScreen> {
           const SizedBox(height: 2),
           Text(
             title,
-            style: const TextStyle(fontSize: 12, color: Colors.grey),
-          ),
-        ],
-      ),
-    );
-  }
-}
+            style: const TextStyle(fontSize
